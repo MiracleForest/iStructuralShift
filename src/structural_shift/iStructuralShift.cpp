@@ -1,7 +1,4 @@
 #include "structural_shift/iStructuralShift.h"
-#include "ll/api/Expected.h"
-#include "ll/api/command/runtime/ParamKind.h"
-#include "mc/nbt/CompoundTag.h"
 #include <ll/api/command/CommandHandle.h>
 #include <ll/api/command/CommandRegistrar.h>
 #include <ll/api/command/runtime/RuntimeCommand.h>
@@ -13,7 +10,6 @@
 #include <mc/world/level/Level.h>
 #include <mc/world/level/levelgen/structure/StructureTemplate.h>
 #include <mc/world/level/storage/DBStorage.h>
-
 
 namespace mif::structural_shift {
 
