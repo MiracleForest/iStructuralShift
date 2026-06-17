@@ -6,6 +6,8 @@
 #include <ll/api/io/FileUtils.h>
 #include <ll/api/mod/RegisterHelper.h>
 #include <ll/api/service/Bedrock.h>
+#include <ll/api/utils/ErrorUtils.h>
+#include <ll/api/utils/StringUtils.h>
 #include <mc/nbt/CompoundTagVariant.h>
 #include <mc/world/level/Level.h>
 #include <mc/world/level/levelgen/structure/StructureTemplate.h>
@@ -27,9 +29,27 @@ bool iStructuralShift::enable() {
                     .getOrCreateCommand("i_structural_shift", {}, CommandPermissionLevel::GameDirectors)
                     .alias("iss");
 
+    cmd.runtimeOverload().text("list").execute(
+        [](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const&) {
+        auto&                    stroage = static_cast<DBStorage&>(origin.getLevel()->getLevelStorage());
+        std::vector<std::string> values;
+        stroage.forEachKeyWithPrefix(
+            "structuretemplate_mystructure:",
+            DBHelpers::Category::All,
+            [&values](std::string_view key, std::string_view) { values.emplace_back(key); }
+        );
+
+        if (values.empty()) {
+            output.error("No structures found.");
+            return;
+        }
+
+        output.success("Found {0} structures: {1}", values.size(), fmt::join(values, ", "));
+    }
+    );
     cmd.runtimeOverload()
         .text("export_all")
-        .execute([this](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const& self) {
+        .execute([this](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const&) {
         auto&                    stroage = static_cast<DBStorage&>(origin.getLevel()->getLevelStorage());
         std::vector<std::string> values;
         ll::Expected<>           errors;
@@ -75,7 +95,6 @@ bool iStructuralShift::enable() {
         output.success("Exported {0} structure", name);
         updateCommandEnum();
     });
-
     cmd.runtimeOverload()
         .text("import_all")
         .execute([this](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const&) {
@@ -89,12 +108,17 @@ bool iStructuralShift::enable() {
             if (auto res = importStructural(entry.path()); !res) {
                 appendError(
                     errors,
-                    ll::makeStringError(fmt::format("Failed to import {0} structure", entry.path().filename().string()))
+                    ll::makeStringError(
+                        fmt::format(
+                            "Failed to import {0} structure",
+                            ll::string_utils::u8str2str(entry.path().stem().u8string())
+                        )
+                    )
                         .error(),
                     std::move(res.error())
                 );
             } else {
-                values.emplace_back(entry.path().filename().string());
+                values.emplace_back(ll::string_utils::u8str2str(entry.path().stem().u8string()));
             }
         }
 
@@ -115,13 +139,67 @@ bool iStructuralShift::enable() {
         .required("name", ll::command::ParamKind::SoftEnum, "structural_shift_import")
         .execute([this](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const& self) {
         auto& name = self["name"].get<ll::command::ParamKind::SoftEnum>();
-        if (auto res = importStructural(getSelf().getDataDir() / u8"structures" / (name + ".mcstructure")); !res) {
+        if (auto res = importStructural((getSelf().getDataDir() / u8"structures" / ll::file_utils::u8path(name))
+                                            .replace_extension(".mcstructure"));
+            !res) {
             output.error("Failed to import {0} structure", name);
             res.error().log(output);
             return;
         }
         output.success("Imported {0} structure", name);
         updateCommandEnum();
+    });
+    cmd.runtimeOverload()
+        .text("remove")
+        .required("name", ll::command::ParamKind::SoftEnum, "structural_shift_export")
+        .execute([this](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const& self) {
+        auto& name = self["name"].get<ll::command::ParamKind::SoftEnum>();
+        if (auto res = removeStructural(name); !res) {
+            output.error("Failed to remove {0} structure", name);
+            res.error().log(output);
+            return;
+        }
+
+        output.success("Removed {0} structure", name);
+        updateCommandEnum();
+    });
+    cmd.runtimeOverload()
+        .text("remove_all")
+        .execute([this](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const&) {
+        auto&                    stroage = static_cast<DBStorage&>(origin.getLevel()->getLevelStorage());
+        std::vector<std::string> names;
+        std::vector<std::string> values;
+        ll::Expected<>           errors;
+
+        stroage.forEachKeyWithPrefix(
+            "structuretemplate_mystructure:",
+            DBHelpers::Category::All,
+            [&names](std::string_view key, std::string_view) { names.emplace_back(key); }
+        );
+
+        for (auto const& name : names) {
+            if (auto res = removeStructural(name); !res) {
+                appendError(
+                    errors,
+                    ll::makeStringError(fmt::format("Failed to remove {0} structure", name)).error(),
+                    std::move(res.error())
+                );
+            } else {
+                values.emplace_back(name);
+            }
+        }
+
+        if (values.empty() && names.empty()) {
+            output.error("No structures found.");
+            return;
+        }
+        if (!values.empty()) {
+            output.success("Removed {0} structures: {1}", values.size(), fmt::join(values, ", "));
+            updateCommandEnum();
+        }
+        if (!errors) {
+            errors.error().log(output);
+        }
     });
     return true;
 }
@@ -130,7 +208,7 @@ bool iStructuralShift::disable() { return true; }
 
 bool iStructuralShift::unload() { return true; }
 
-ll::Expected<> iStructuralShift::importStructural(std::filesystem::path const& path) {
+ll::Expected<> iStructuralShift::importStructural(std::filesystem::path const& path) try {
     if (!std::filesystem::exists(path)) return ll::makeStringError("File not found");
     if (!std::filesystem::is_regular_file(path)) return ll::makeStringError("Not a regular file");
     if (path.extension() != ".mcstructure") return ll::makeStringError("Not a mcstructure file");
@@ -151,26 +229,28 @@ ll::Expected<> iStructuralShift::importStructural(std::filesystem::path const& p
     }
 
     stroage.saveData(
-        fmt::format("structuretemplate_mystructure:{0}", path.stem().string()),
+        fmt::format("structuretemplate_mystructure:{0}", ll::string_utils::u8str2str(path.stem().u8string())),
         std::move(*content),
         DBHelpers::Category::All
     );
     return {};
+} catch (...) {
+    return ll::makeExceptionError();
 }
 
-ll::Expected<> iStructuralShift::exportStructural(std::string_view name) {
+ll::Expected<> iStructuralShift::exportStructural(std::string_view name) try {
     auto level = ll::service::getLevel();
     if (!level) return ll::makeStringError("No level");
-    auto& stroage = static_cast<DBStorage&>(level->getLevelStorage());
+    auto& storage = static_cast<DBStorage&>(level->getLevelStorage());
 
     auto key = fmt::format("structuretemplate_mystructure:{0}", name);
-    if (!stroage.hasKey(key, DBHelpers::Category::All)) return ll::makeStringError("Structure template not found");
+    if (!storage.hasKey(key, DBHelpers::Category::All)) return ll::makeStringError("Structure template not found");
 
     std::string content;
-    if (!stroage.loadData(key, content, DBHelpers::Category::All)) return ll::makeStringError("Failed to load data");
+    if (!storage.loadData(key, content, DBHelpers::Category::All)) return ll::makeStringError("Failed to load data");
 
     if (!ll::file_utils::writeFile(
-            getSelf().getDataDir() / u8"structures" / (std::string{name} + ".mcstructure"),
+            (getSelf().getDataDir() / u8"structures" / ll::file_utils::u8path(name)).replace_extension(".mcstructure"),
             content,
             true
         )) {
@@ -178,9 +258,25 @@ ll::Expected<> iStructuralShift::exportStructural(std::string_view name) {
     }
 
     return {};
+} catch (...) {
+    return ll::makeExceptionError();
 }
 
-void iStructuralShift::updateCommandEnum() {
+ll::Expected<> iStructuralShift::removeStructural(std::string_view name) try {
+    auto level = ll::service::getLevel();
+    if (!level) return ll::makeStringError("No level");
+    auto& storage = static_cast<DBStorage&>(level->getLevelStorage());
+
+    auto key = fmt::format("structuretemplate_mystructure:{0}", name);
+    if (!storage.hasKey(key, DBHelpers::Category::All)) return ll::makeStringError("Structure template not found");
+
+    storage.deleteData(key, DBHelpers::Category::All);
+    return {};
+} catch (...) {
+    return ll::makeExceptionError();
+}
+
+void iStructuralShift::updateCommandEnum() try {
     auto level = ll::service::getLevel();
     if (!level) return;
     auto& stroage   = static_cast<DBStorage&>(level->getLevelStorage());
@@ -199,7 +295,6 @@ void iStructuralShift::updateCommandEnum() {
         registrar.setSoftEnumValues("structural_shift_export", std::move(values));
     }
     {
-        // std::filesystem::
         auto directory = getSelf().getDataDir() / u8"structures";
         {
             std::error_code ec;
@@ -210,10 +305,13 @@ void iStructuralShift::updateCommandEnum() {
         for (auto& entry : std::filesystem::directory_iterator(directory)) {
             if (!entry.is_regular_file()) continue;
             if (entry.path().extension() != ".mcstructure") continue;
-            values.emplace_back(entry.path().stem().string());
+            values.emplace_back(ll::string_utils::u8str2str(entry.path().stem().u8string()));
         }
         registrar.setSoftEnumValues("structural_shift_import", std::move(values));
     }
+} catch (...) {
+    getSelf().getLogger().error("Failed to update command enum");
+    ll::error_utils::printCurrentException(getSelf().getLogger());
 }
 
 LL_REGISTER_MOD(iStructuralShift, iStructuralShift::getInstance());

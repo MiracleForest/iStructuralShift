@@ -20,6 +20,7 @@ public:
 
     ll::Expected<> importStructural(std::filesystem::path const& path);
     ll::Expected<> exportStructural(std::string_view name);
+    ll::Expected<> removeStructural(std::string_view name);
     void           updateCommandEnum();
 
     template <typename First, typename... Rest>
