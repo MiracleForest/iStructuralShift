@@ -4,12 +4,16 @@
 #include <ll/api/command/runtime/RuntimeCommand.h>
 #include <ll/api/command/runtime/RuntimeOverload.h>
 #include <ll/api/io/FileUtils.h>
+#include <ll/api/memory/Hook.h>
 #include <ll/api/mod/RegisterHelper.h>
 #include <ll/api/service/Bedrock.h>
 #include <ll/api/utils/ErrorUtils.h>
 #include <ll/api/utils/StringUtils.h>
 #include <mc/nbt/CompoundTagVariant.h>
+#include <mc/server/commands/standard/StructureCommand.h>
+#include <mc/world/level/BlockPos.h>
 #include <mc/world/level/Level.h>
+#include <mc/world/level/dimension/DimensionHeightRange.h>
 #include <mc/world/level/levelgen/structure/StructureTemplate.h>
 #include <mc/world/level/storage/DBStorage.h>
 
@@ -201,6 +205,30 @@ bool iStructuralShift::enable() {
             errors.error().log(output);
         }
     });
+    cmd.runtimeOverload()
+        .text("bypass_limit")
+        .optional("status", ll::command::ParamKind::Bool)
+        .execute([](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const& self) {
+        using Hooks = ll::memory::HookRegistrar<NoStructureRangeLimitHook>;
+        static bool mCurrentStatus{false};
+
+        if (self["status"].has_value()) {
+            auto status = self["status"].get<ll::command::ParamKind::Bool>();
+            if (status != mCurrentStatus) {
+                mCurrentStatus = status;
+                status ? Hooks::hook() : Hooks::unhook();
+                output.success("Vanilla structure range limit removal {0}", status ? "enabled" : "disabled");
+                return;
+            }
+            output.error("Vanilla structure range limit removal already {0}", status ? "enabled" : "disabled");
+            return;
+        }
+
+        output.success(
+            "Vanilla structure range limit removal is currently {0}",
+            mCurrentStatus ? "enabled" : "disabled"
+        );
+    });
     return true;
 }
 
@@ -312,6 +340,45 @@ void iStructuralShift::updateCommandEnum() try {
 } catch (...) {
     getSelf().getLogger().error("Failed to update command enum");
     ll::error_utils::printCurrentException(getSelf().getLogger());
+}
+
+LL_TYPE_INSTANCE_HOOK(
+    iStructuralShift::NoStructureRangeLimitHook,
+    HookPriority::Normal,
+    StructureCommand,
+    &StructureCommand::_isValidSize,
+    bool,
+    BlockPos const&             size,
+    DimensionHeightRange const& heightRange,
+    CommandOutput&              output
+) {
+    if (size.x < 1 || size.y < 1 || size.z < 1) {
+        std::vector<CommandOutputParameter> params{
+            CommandOutputParameter{std::to_string(1).c_str()},
+            CommandOutputParameter{std::to_string(1).c_str()},
+            CommandOutputParameter{std::to_string(1).c_str()},
+            CommandOutputParameter{std::to_string(size.x).c_str()},
+            CommandOutputParameter{std::to_string(size.y).c_str()},
+            CommandOutputParameter{std::to_string(size.z).c_str()}
+        };
+        output.addMessage("commands.structure.size.tooSmall", params, CommandOutputMessageType::Error);
+        return false;
+    }
+
+    if (auto maxHeight = heightRange.mMax - heightRange.mMin; size.y > maxHeight) {
+        std::vector<CommandOutputParameter> params{
+            CommandOutputParameter("∞"),
+            CommandOutputParameter(std::to_string(maxHeight).c_str()),
+            CommandOutputParameter("∞"),
+            CommandOutputParameter(std::to_string(size.x).c_str()),
+            CommandOutputParameter(std::to_string(size.y).c_str()),
+            CommandOutputParameter(std::to_string(size.z).c_str())
+        };
+        output.addMessage("commands.structure.size.tooBig", params, CommandOutputMessageType::Error);
+        return false;
+    }
+
+    return true;
 }
 
 LL_REGISTER_MOD(iStructuralShift, iStructuralShift::getInstance());

@@ -1,11 +1,12 @@
 #pragma once
-#include "ll/api/Expected.h"
-#include "ll/api/coro/Generator.h"
 #include <ll/api/mod/NativeMod.h>
 
 namespace mif::structural_shift {
 
 class iStructuralShift {
+public:
+    struct NoStructureRangeLimitHook;
+
 public:
     static iStructuralShift& getInstance();
 
