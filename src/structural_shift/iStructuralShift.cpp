@@ -9,13 +9,22 @@
 #include <ll/api/service/Bedrock.h>
 #include <ll/api/utils/ErrorUtils.h>
 #include <ll/api/utils/StringUtils.h>
-#include <mc/nbt/CompoundTagVariant.h>
+#include <mc/server/commands/CommandOrigin.h>
+#include <mc/server/commands/CommandOutput.h>
+#include <mc/server/commands/CommandOutputParameter.h>
 #include <mc/server/commands/standard/StructureCommand.h>
 #include <mc/world/level/BlockPos.h>
 #include <mc/world/level/Level.h>
 #include <mc/world/level/dimension/DimensionHeightRange.h>
+#include <mc/world/level/levelgen/structure/StructureManager.h>
 #include <mc/world/level/levelgen/structure/StructureTemplate.h>
 #include <mc/world/level/storage/DBStorage.h>
+#if __has_include(<mc/nbt/CompoundTagVariant.h>)
+#  include <mc/nbt/CompoundTagVariant.h>
+#endif
+#if __has_include(<mc/deps/nbt/CompoundTagVariant.h>)
+#  include <mc/deps/nbt/CompoundTagVariant.h>
+#endif
 
 namespace mif::structural_shift {
 
@@ -28,11 +37,18 @@ bool iStructuralShift::load() { return true; }
 
 bool iStructuralShift::enable() {
     updateCommandEnum();
+    ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook>::hook();
 
-    auto& cmd = ll::command::CommandRegistrar::getInstance()
+    auto& cmd = getCommandRegistrar()
                     .getOrCreateCommand("i_structural_shift", {}, CommandPermissionLevel::GameDirectors)
                     .alias("iss");
 
+    cmd.runtimeOverload()
+        .text("update_enum")
+        .execute([this](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const&) {
+        updateCommandEnum();
+        output.success("Updated command enum.");
+    });
     cmd.runtimeOverload().text("list").execute(
         [](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const&) {
         auto&                    stroage = static_cast<DBStorage&>(origin.getLevel()->getLevelStorage());
@@ -232,7 +248,10 @@ bool iStructuralShift::enable() {
     return true;
 }
 
-bool iStructuralShift::disable() { return true; }
+bool iStructuralShift::disable() {
+    ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook>::unhook();
+    return true;
+}
 
 bool iStructuralShift::unload() { return true; }
 
@@ -308,7 +327,7 @@ void iStructuralShift::updateCommandEnum() try {
     auto level = ll::service::getLevel();
     if (!level) return;
     auto& stroage   = static_cast<DBStorage&>(level->getLevelStorage());
-    auto& registrar = ll::command::CommandRegistrar::getInstance();
+    auto& registrar = getCommandRegistrar();
     for (auto enumName : {"structural_shift_export", "structural_shift_import"}) {
         if (!registrar.hasSoftEnum(enumName)) registrar.tryRegisterSoftEnum(enumName, {});
     }
@@ -340,6 +359,15 @@ void iStructuralShift::updateCommandEnum() try {
 } catch (...) {
     getSelf().getLogger().error("Failed to update command enum");
     ll::error_utils::printCurrentException(getSelf().getLogger());
+}
+
+ll::command::CommandRegistrar& iStructuralShift::getCommandRegistrar() {
+    // clang-format off
+    return ll::Overloaded{
+        [](auto& (*func)()) -> auto& { return func(); },
+        [](auto& (*func)(bool)) -> auto& { return func(false); }
+    }(&ll::command::CommandRegistrar::getInstance);
+    // clang-format on
 }
 
 LL_TYPE_INSTANCE_HOOK(
@@ -379,6 +407,34 @@ LL_TYPE_INSTANCE_HOOK(
     }
 
     return true;
+}
+
+LL_TYPE_INSTANCE_HOOK(
+    iStructuralShift::SaveStructureHook,
+    HookPriority::Normal,
+    StructureManager,
+    &StructureManager::saveToLevel,
+    void,
+    StructureTemplate const& structureTemplate,
+    LevelStorage&            levelStorage
+) {
+    origin(structureTemplate, levelStorage);
+
+    getInstance().updateCommandEnum();
+}
+
+LL_TYPE_INSTANCE_HOOK(
+    iStructuralShift::DeleteStructureHook,
+    HookPriority::Normal,
+    StructureManager,
+    &StructureManager::deleteStructure,
+    StructureDeleteResult,
+    std::string const& structureName,
+    LevelStorage&      levelStorage
+) {
+    auto result = origin(structureName, levelStorage);
+    if (result == StructureDeleteResult::Success) getInstance().updateCommandEnum();
+    return result;
 }
 
 LL_REGISTER_MOD(iStructuralShift, iStructuralShift::getInstance());

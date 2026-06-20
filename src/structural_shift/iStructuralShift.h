@@ -1,11 +1,17 @@
 #pragma once
 #include <ll/api/mod/NativeMod.h>
 
+namespace ll::command {
+class CommandRegistrar;
+}
+
 namespace mif::structural_shift {
 
 class iStructuralShift {
 public:
     struct NoStructureRangeLimitHook;
+    struct SaveStructureHook;
+    struct DeleteStructureHook;
 
 public:
     static iStructuralShift& getInstance();
@@ -23,6 +29,8 @@ public:
     ll::Expected<> exportStructural(std::string_view name);
     ll::Expected<> removeStructural(std::string_view name);
     void           updateCommandEnum();
+
+    static ll::command::CommandRegistrar& getCommandRegistrar();
 
     template <typename First, typename... Rest>
     static ll::Error combineErrors(First&& first, Rest&&... rest) {
