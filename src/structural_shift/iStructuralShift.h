@@ -4,12 +4,14 @@
 namespace ll::command {
 class CommandRegistrar;
 }
+class Level;
 
 namespace mif::structural_shift {
 
 class iStructuralShift {
 public:
     struct NoStructureRangeLimitHook;
+    struct GetOrCreateStructureHook;
     struct SaveStructureHook;
     struct DeleteStructureHook;
 
@@ -25,12 +27,14 @@ public:
     bool disable();
     bool unload();
 
-    ll::Expected<> importStructural(std::filesystem::path const& path);
-    ll::Expected<> exportStructural(std::string_view name);
-    ll::Expected<> removeStructural(std::string_view name);
-    void           updateCommandEnum();
+    std::filesystem::path getStructuralPath(std::string_view name);
+    ll::Expected<>        importStructural(std::filesystem::path const& path);
+    ll::Expected<>        exportStructural(std::string_view name);
+    ll::Expected<>        removeStructural(std::string_view name);
+    void                  updateCommandEnum();
 
     static ll::command::CommandRegistrar& getCommandRegistrar();
+    static ll::SmallDenseSet<std::string> getAllStructuralNames(Level& level);
 
     template <typename First, typename... Rest>
     static ll::Error combineErrors(First&& first, Rest&&... rest) {

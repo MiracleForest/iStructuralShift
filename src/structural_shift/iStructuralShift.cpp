@@ -1,4 +1,5 @@
 #include "structural_shift/iStructuralShift.h"
+#include <algorithm>
 #include <ll/api/command/CommandHandle.h>
 #include <ll/api/command/CommandRegistrar.h>
 #include <ll/api/command/runtime/RuntimeCommand.h>
@@ -37,27 +38,18 @@ bool iStructuralShift::load() { return true; }
 
 bool iStructuralShift::enable() {
     updateCommandEnum();
-    ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook>::hook();
+    ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook, GetOrCreateStructureHook>::hook();
 
     auto& cmd = getCommandRegistrar()
-                    .getOrCreateCommand("i_structural_shift", {}, CommandPermissionLevel::GameDirectors)
+                    .getOrCreateCommand("structural_shift", {}, CommandPermissionLevel::GameDirectors)
                     .alias("iss");
 
-    cmd.runtimeOverload()
-        .text("update_enum")
-        .execute([this](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const&) {
+    cmd.runtimeOverload().text("update_enum").execute([this](CommandOrigin const&, CommandOutput& output, auto&&) {
         updateCommandEnum();
         output.success("Updated command enum.");
     });
-    cmd.runtimeOverload().text("list").execute(
-        [](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const&) {
-        auto&                    stroage = static_cast<DBStorage&>(origin.getLevel()->getLevelStorage());
-        std::vector<std::string> values;
-        stroage.forEachKeyWithPrefix(
-            "structuretemplate_mystructure:",
-            DBHelpers::Category::All,
-            [&values](std::string_view key, std::string_view) { values.emplace_back(key); }
-        );
+    cmd.runtimeOverload().text("list").execute([](CommandOrigin const& origin, CommandOutput& output, auto&&) {
+        auto values = getAllStructuralNames(*origin.getLevel());
 
         if (values.empty()) {
             output.error("No structures found.");
@@ -65,31 +57,27 @@ bool iStructuralShift::enable() {
         }
 
         output.success("Found {0} structures: {1}", values.size(), fmt::join(values, ", "));
-    }
-    );
+    });
     cmd.runtimeOverload()
         .text("export_all")
-        .execute([this](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const&) {
-        auto&                    stroage = static_cast<DBStorage&>(origin.getLevel()->getLevelStorage());
+        .execute([this](CommandOrigin const& origin, CommandOutput& output, auto&&) {
+        auto                     names = getAllStructuralNames(*origin.getLevel());
         std::vector<std::string> values;
         ll::Expected<>           errors;
-        stroage.forEachKeyWithPrefix(
-            "structuretemplate_mystructure:",
-            DBHelpers::Category::All,
-            [this, &values, &errors](std::string_view key, std::string_view) {
-            if (auto res = exportStructural(key); !res) {
+
+        for (auto const& name : names) {
+            if (auto res = exportStructural(name); !res) {
                 appendError(
                     errors,
-                    ll::makeStringError(fmt::format("Failed to export {0} structure", key)).error(),
+                    ll::makeStringError(fmt::format("Failed to export {0} structure", name)).error(),
                     std::move(res.error())
                 );
             } else {
-                values.emplace_back(key);
+                values.emplace_back(name);
             }
         }
-        );
 
-        if (values.empty() && errors) {
+        if (values.empty() && names.empty()) {
             output.error("No structures found.");
             return;
         }
@@ -115,9 +103,7 @@ bool iStructuralShift::enable() {
         output.success("Exported {0} structure", name);
         updateCommandEnum();
     });
-    cmd.runtimeOverload()
-        .text("import_all")
-        .execute([this](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const&) {
+    cmd.runtimeOverload().text("import_all").execute([this](CommandOrigin const&, CommandOutput& output, auto&&) {
         std::vector<std::string> values;
         ll::Expected<>           errors;
 
@@ -185,17 +171,10 @@ bool iStructuralShift::enable() {
     });
     cmd.runtimeOverload()
         .text("remove_all")
-        .execute([this](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const&) {
-        auto&                    stroage = static_cast<DBStorage&>(origin.getLevel()->getLevelStorage());
-        std::vector<std::string> names;
+        .execute([this](CommandOrigin const& origin, CommandOutput& output, auto&&) {
+        auto                     names = getAllStructuralNames(*origin.getLevel());
         std::vector<std::string> values;
         ll::Expected<>           errors;
-
-        stroage.forEachKeyWithPrefix(
-            "structuretemplate_mystructure:",
-            DBHelpers::Category::All,
-            [&names](std::string_view key, std::string_view) { names.emplace_back(key); }
-        );
 
         for (auto const& name : names) {
             if (auto res = removeStructural(name); !res) {
@@ -249,11 +228,15 @@ bool iStructuralShift::enable() {
 }
 
 bool iStructuralShift::disable() {
-    ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook>::unhook();
+    ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook, GetOrCreateStructureHook>::unhook();
     return true;
 }
 
 bool iStructuralShift::unload() { return true; }
+
+std::filesystem::path iStructuralShift::getStructuralPath(std::string_view name) {
+    return (getSelf().getDataDir() / u8"structures" / ll::file_utils::u8path(name)).replace_extension(".mcstructure");
+}
 
 ll::Expected<> iStructuralShift::importStructural(std::filesystem::path const& path) try {
     if (!std::filesystem::exists(path)) return ll::makeStringError("File not found");
@@ -262,6 +245,7 @@ ll::Expected<> iStructuralShift::importStructural(std::filesystem::path const& p
 
     auto level = ll::service::getLevel();
     if (!level) return ll::makeStringError("No level");
+    auto  name    = ll::string_utils::u8str2str(path.stem().u8string());
     auto& stroage = static_cast<DBStorage&>(level->getLevelStorage());
 
     auto content = ll::file_utils::readFile(path, true);
@@ -276,10 +260,11 @@ ll::Expected<> iStructuralShift::importStructural(std::filesystem::path const& p
     }
 
     stroage.saveData(
-        fmt::format("structuretemplate_mystructure:{0}", ll::string_utils::u8str2str(path.stem().u8string())),
+        fmt::format("structuretemplate_mystructure:{0}", name),
         std::move(*content),
         DBHelpers::Category::All
     );
+    level->getStructureManager()->mStructureRepository->erase(fmt::format("mystructure:{0}", name));
     return {};
 } catch (...) {
     return ll::makeExceptionError();
@@ -288,19 +273,34 @@ ll::Expected<> iStructuralShift::importStructural(std::filesystem::path const& p
 ll::Expected<> iStructuralShift::exportStructural(std::string_view name) try {
     auto level = ll::service::getLevel();
     if (!level) return ll::makeStringError("No level");
-    auto& storage = static_cast<DBStorage&>(level->getLevelStorage());
+    auto& structures = *level->getStructureManager()->mStructureRepository;
+    auto& storage    = static_cast<DBStorage&>(level->getLevelStorage());
 
-    auto key = fmt::format("structuretemplate_mystructure:{0}", name);
-    if (!storage.hasKey(key, DBHelpers::Category::All)) return ll::makeStringError("Structure template not found");
+    auto cacheName   = fmt::format("mystructure:{0}", name);
+    auto storageName = fmt::format("structuretemplate_{0}", cacheName);
+
+    if (auto it = structures.find(cacheName); it != structures.end()) {
+        auto tag = it->second->save();
+        if (!tag) return ll::makeStringError("Failed to save structure template");
+
+        auto content = tag->toBinaryNbt();
+        if (!ll::file_utils::writeFile(getStructuralPath(name), content, true)) {
+            return ll::makeStringError("Failed to write file");
+        }
+
+        return {};
+    }
+
+    if (!storage.hasKey(storageName, DBHelpers::Category::All)) {
+        return ll::makeStringError("Structure template not found");
+    }
 
     std::string content;
-    if (!storage.loadData(key, content, DBHelpers::Category::All)) return ll::makeStringError("Failed to load data");
+    if (!storage.loadData(storageName, content, DBHelpers::Category::All)) {
+        return ll::makeStringError("Failed to load data");
+    }
 
-    if (!ll::file_utils::writeFile(
-            (getSelf().getDataDir() / u8"structures" / ll::file_utils::u8path(name)).replace_extension(".mcstructure"),
-            content,
-            true
-        )) {
+    if (!ll::file_utils::writeFile(getStructuralPath(name), content, true)) {
         return ll::makeStringError("Failed to write file");
     }
 
@@ -312,12 +312,23 @@ ll::Expected<> iStructuralShift::exportStructural(std::string_view name) try {
 ll::Expected<> iStructuralShift::removeStructural(std::string_view name) try {
     auto level = ll::service::getLevel();
     if (!level) return ll::makeStringError("No level");
-    auto& storage = static_cast<DBStorage&>(level->getLevelStorage());
+    auto& storage    = static_cast<DBStorage&>(level->getLevelStorage());
+    auto& structures = *level->getStructureManager()->mStructureRepository;
 
-    auto key = fmt::format("structuretemplate_mystructure:{0}", name);
-    if (!storage.hasKey(key, DBHelpers::Category::All)) return ll::makeStringError("Structure template not found");
+    auto cacheName   = fmt::format("mystructure:{0}", name);
+    auto storageName = fmt::format("structuretemplate_{0}", cacheName);
 
-    storage.deleteData(key, DBHelpers::Category::All);
+    auto fileRemoved{false};
+    if (auto it = structures.find(cacheName); it != structures.end()) {
+        structures.erase(it);
+        fileRemoved = true;
+    }
+
+    if (!storage.hasKey(storageName, DBHelpers::Category::All) && !fileRemoved) {
+        return ll::makeStringError("Structure template not found");
+    }
+
+    storage.deleteData(storageName, DBHelpers::Category::All);
     return {};
 } catch (...) {
     return ll::makeExceptionError();
@@ -326,21 +337,15 @@ ll::Expected<> iStructuralShift::removeStructural(std::string_view name) try {
 void iStructuralShift::updateCommandEnum() try {
     auto level = ll::service::getLevel();
     if (!level) return;
-    auto& stroage   = static_cast<DBStorage&>(level->getLevelStorage());
     auto& registrar = getCommandRegistrar();
     for (auto enumName : {"structural_shift_export", "structural_shift_import"}) {
         if (!registrar.hasSoftEnum(enumName)) registrar.tryRegisterSoftEnum(enumName, {});
     }
 
-    {
-        std::vector<std::string> values;
-        stroage.forEachKeyWithPrefix(
-            "structuretemplate_mystructure:",
-            DBHelpers::Category::All,
-            [&values](std::string_view key, std::string_view) { values.emplace_back(key); }
-        );
-        registrar.setSoftEnumValues("structural_shift_export", std::move(values));
-    }
+    registrar.setSoftEnumValues(
+        "structural_shift_export",
+        getAllStructuralNames(*level) | std::ranges::to<std::vector>()
+    );
     {
         auto directory = getSelf().getDataDir() / u8"structures";
         {
@@ -370,6 +375,20 @@ ll::command::CommandRegistrar& iStructuralShift::getCommandRegistrar() {
     // clang-format on
 }
 
+ll::SmallDenseSet<std::string> iStructuralShift::getAllStructuralNames(Level& level) {
+    auto&                          stroage = static_cast<DBStorage&>(level.getLevelStorage());
+    ll::SmallDenseSet<std::string> values;
+    stroage.forEachKeyWithPrefix(
+        "structuretemplate_mystructure:",
+        DBHelpers::Category::All,
+        [&values](std::string_view key, std::string_view) { values.insert(std::string{key}); }
+    );
+    for (auto& [name, _structure] : *level.getStructureManager()->mStructureRepository) {
+        values.insert(name.substr(sizeof("mystructure:") - 1));
+    }
+    return values;
+}
+
 LL_TYPE_INSTANCE_HOOK(
     iStructuralShift::NoStructureRangeLimitHook,
     HookPriority::Normal,
@@ -395,12 +414,12 @@ LL_TYPE_INSTANCE_HOOK(
 
     if (auto maxHeight = heightRange.mMax - heightRange.mMin; size.y > maxHeight) {
         std::vector<CommandOutputParameter> params{
-            CommandOutputParameter("∞"),
-            CommandOutputParameter(std::to_string(maxHeight).c_str()),
-            CommandOutputParameter("∞"),
-            CommandOutputParameter(std::to_string(size.x).c_str()),
-            CommandOutputParameter(std::to_string(size.y).c_str()),
-            CommandOutputParameter(std::to_string(size.z).c_str())
+            CommandOutputParameter{"∞"},
+            CommandOutputParameter{std::to_string(maxHeight).c_str()},
+            CommandOutputParameter{"∞"},
+            CommandOutputParameter{std::to_string(size.x).c_str()},
+            CommandOutputParameter{std::to_string(size.y).c_str()},
+            CommandOutputParameter{std::to_string(size.z).c_str()}
         };
         output.addMessage("commands.structure.size.tooBig", params, CommandOutputMessageType::Error);
         return false;
@@ -419,8 +438,20 @@ LL_TYPE_INSTANCE_HOOK(
     LevelStorage&            levelStorage
 ) {
     origin(structureTemplate, levelStorage);
-
     getInstance().updateCommandEnum();
+}
+
+LL_TYPE_INSTANCE_HOOK(
+    iStructuralShift::GetOrCreateStructureHook,
+    HookPriority::Normal,
+    StructureManager,
+    &StructureManager::getOrCreate,
+    StructureTemplate&,
+    std::string const& structureName
+) {
+    auto& result = origin(structureName);
+    getInstance().updateCommandEnum();
+    return result;
 }
 
 LL_TYPE_INSTANCE_HOOK(
