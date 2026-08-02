@@ -1,4 +1,6 @@
 #pragma once
+#include <ll/api/base/Containers.h>
+#include <ll/api/event/ListenerBase.h>
 #include <ll/api/mod/NativeMod.h>
 
 namespace ll::command {
@@ -32,6 +34,7 @@ public:
     ll::Expected<>        exportStructural(std::string_view name);
     ll::Expected<>        removeStructural(std::string_view name);
     void                  updateCommandEnum();
+    void                  registerCommand();
 
     static ll::SmallDenseSet<std::string> getAllStructuralNames(Level& level);
 
@@ -51,7 +54,8 @@ public:
     }
 
 private:
-    ll::mod::NativeMod& mSelf;
+    ll::mod::NativeMod&                       mSelf;
+    ll::SmallDenseSet<ll::event::ListenerPtr> mListeners;
 };
 
 } // namespace mif::structural_shift

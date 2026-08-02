@@ -3,13 +3,19 @@
 #include <ll/api/command/CommandRegistrar.h>
 #include <ll/api/command/runtime/RuntimeCommand.h>
 #include <ll/api/command/runtime/RuntimeOverload.h>
+#include <ll/api/event/EventBus.h>
+#include <ll/api/event/command/ServerCommandRegisterEvent.h>
+#include <ll/api/event/server/ServerStartedEvent.h>
+#include <ll/api/event/server/ServerStoppingEvent.h>
 #include <ll/api/i18n/I18n.h>
 #include <ll/api/io/FileUtils.h>
 #include <ll/api/memory/Hook.h>
 #include <ll/api/mod/RegisterHelper.h>
 #include <ll/api/service/Bedrock.h>
+#include <ll/api/service/GamingStatus.h>
 #include <ll/api/utils/ErrorUtils.h>
 #include <ll/api/utils/StringUtils.h>
+#include <mc/deps/nbt/CompoundTagVariant.h>
 #include <mc/server/commands/CommandOrigin.h>
 #include <mc/server/commands/CommandOutput.h>
 #include <mc/server/commands/CommandOutputParameter.h>
@@ -21,12 +27,6 @@
 #include <mc/world/level/levelgen/structure/StructureTemplate.h>
 #include <mc/world/level/storage/DBStorage.h>
 
-#if __has_include(<mc/nbt/CompoundTagVariant.h>)
-#  include <mc/nbt/CompoundTagVariant.h>
-#endif
-#if __has_include(<mc/deps/nbt/CompoundTagVariant.h>)
-#  include <mc/deps/nbt/CompoundTagVariant.h>
-#endif
 
 namespace mif::structural_shift {
 
@@ -43,13 +43,36 @@ bool iStructuralShift::load() {
         getSelf().getLogger().error("Failed to load i18n.");
         result.error().log(getSelf().getLogger());
     }
+    auto& eventBus = ll::event::EventBus::getInstance();
+    mListeners.insert(eventBus.emplaceListener<ll::event::ServerCommandRegisterEvent>([&](auto&) {
+        updateCommandEnum();
+        registerCommand();
+    }));
+    mListeners.insert(eventBus.emplaceListener<ll::event::ServerStoppingEvent>([&](auto&) {
+        ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook, GetOrCreateStructureHook>::unhook();
+    }));
+    mListeners.insert(eventBus.emplaceListener<ll::event::ServerStartedEvent>([&](auto&) {
+        ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook, GetOrCreateStructureHook>::hook();
+    }));
     return true;
 }
 
-bool iStructuralShift::enable() {
-    updateCommandEnum();
-    ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook, GetOrCreateStructureHook>::hook();
+bool iStructuralShift::enable() { return true; }
 
+bool iStructuralShift::disable() { return true; }
+
+bool iStructuralShift::unload() {
+    auto& eventBus = ll::event::EventBus::getInstance();
+    for (auto& listener : mListeners) {
+        eventBus.removeListener(listener);
+    }
+    if (ll::getGamingStatus() == ll::GamingStatus::Running) {
+        ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook, GetOrCreateStructureHook>::unhook();
+    }
+    return true;
+}
+
+void iStructuralShift::registerCommand() {
     auto& cmd = ll::command::CommandRegistrar::getInstance(false)
                     .getOrCreateCommand("structural_shift", {}, CommandPermissionLevel::GameDirectors)
                     .alias("iss");
@@ -276,15 +299,7 @@ bool iStructuralShift::enable() {
             )
         );
     });
-    return true;
 }
-
-bool iStructuralShift::disable() {
-    ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook, GetOrCreateStructureHook>::unhook();
-    return true;
-}
-
-bool iStructuralShift::unload() { return true; }
 
 std::filesystem::path iStructuralShift::getStructuralPath(std::string_view name) {
     return (getSelf().getDataDir() / u8"structures" / ll::file_utils::u8path(name)).replace_extension(".mcstructure");
