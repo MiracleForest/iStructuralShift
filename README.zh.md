@@ -1,5 +1,7 @@
 # iStructuralShift
 
+[English README](README.md)
+
 一个给 LeviLamina 服务端用的 Minecraft 结构导入导出模组。
 
 ## 简介

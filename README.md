@@ -1,5 +1,7 @@
 # iStructuralShift
 
+[简体中文说明](README.zh.md)
+
 A LeviLamina server mod for managing Minecraft structure templates.
 
 ## Description
