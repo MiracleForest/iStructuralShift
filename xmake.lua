@@ -2,9 +2,15 @@ add_rules("mode.debug", "mode.release")
 add_rules("plugin.vsxmake.autoupdate")
 add_rules("plugin.compile_commands.autoupdate")
 
+option("target_type")
+    set_default("server")
+    set_showmenu(true)
+    set_values("server", "client")
+option_end()
+
 add_repositories("liteldev-repo https://github.com/LiteLDev/xmake-repo.git")
 
-add_requires("levilamina 26.20.7", { configs = { target_type = "server" } })
+add_requires("levilamina 26.20.7", { configs = { target_type = get_config("target_type") } })
 
 if not has_config("vs_runtime") then
     set_runtimes("MD")
@@ -31,7 +37,6 @@ target("iStructuralShift")
         "NOMINMAX", 
         "UNICODE",
         "_HAS_CXX23=1",
-        "LL_PLAT_S",
         "_SILENCE_CXX20_IS_ALWAYS_EQUAL_DEPRECATION_WARNING=1"
     )
     add_packages("levilamina")
@@ -83,7 +88,13 @@ target("iStructuralShift")
             format("%s/manifest.json", output_dir),
             {
                 name = target:name(),
-                entry = path.basename(target:targetfile())
+                entry = path.basename(target:targetfile()),
+                author = "MiracleForest",
+                version = import("scripts.get-version-info", { rootdir = os.projectdir() }).get_version_info().version_str,
+                description = "A simple structural shift mod",
+                extraInfo = {
+                    gitHub = "https://github.com/MiracleForest/iStructuralShift"
+                }
             }
         )
     end)
