@@ -1,9 +1,9 @@
 #include "structural_shift/iStructuralShift.h"
-#include <algorithm>
 #include <ll/api/command/CommandHandle.h>
 #include <ll/api/command/CommandRegistrar.h>
 #include <ll/api/command/runtime/RuntimeCommand.h>
 #include <ll/api/command/runtime/RuntimeOverload.h>
+#include <ll/api/i18n/I18n.h>
 #include <ll/api/io/FileUtils.h>
 #include <ll/api/memory/Hook.h>
 #include <ll/api/mod/RegisterHelper.h>
@@ -20,6 +20,7 @@
 #include <mc/world/level/levelgen/structure/StructureManager.h>
 #include <mc/world/level/levelgen/structure/StructureTemplate.h>
 #include <mc/world/level/storage/DBStorage.h>
+
 #if __has_include(<mc/nbt/CompoundTagVariant.h>)
 #  include <mc/nbt/CompoundTagVariant.h>
 #endif
@@ -29,34 +30,51 @@
 
 namespace mif::structural_shift {
 
+using namespace ll::i18n_literals;
+using namespace fmt::literals;
+
 iStructuralShift& iStructuralShift::getInstance() {
     static iStructuralShift instance;
     return instance;
 }
 
-bool iStructuralShift::load() { return true; }
+bool iStructuralShift::load() {
+    if (auto result = ll::i18n::getInstance().load(getSelf().getLangDir()); !result) {
+        getSelf().getLogger().error("Failed to load i18n.");
+        result.error().log(getSelf().getLogger());
+    }
+    return true;
+}
 
 bool iStructuralShift::enable() {
     updateCommandEnum();
     ll::memory::HookRegistrar<SaveStructureHook, DeleteStructureHook, GetOrCreateStructureHook>::hook();
 
-    auto& cmd = getCommandRegistrar()
+    auto& cmd = ll::command::CommandRegistrar::getInstance(false)
                     .getOrCreateCommand("structural_shift", {}, CommandPermissionLevel::GameDirectors)
                     .alias("iss");
 
-    cmd.runtimeOverload().text("update_enum").execute([this](CommandOrigin const&, CommandOutput& output, auto&&) {
+    cmd.runtimeOverload()
+        .text("update_enum")
+        .execute([this](CommandOrigin const& origin, CommandOutput& output, auto&&) {
         updateCommandEnum();
-        output.success("Updated command enum.");
+        output.success("Updated command enum."_trl(origin.getLocaleCode()));
     });
     cmd.runtimeOverload().text("list").execute([](CommandOrigin const& origin, CommandOutput& output, auto&&) {
         auto values = getAllStructuralNames(*origin.getLevel());
 
         if (values.empty()) {
-            output.error("No structures found.");
+            output.error("No structures found."_trl(origin.getLocaleCode()));
             return;
         }
 
-        output.success("Found {0} structures: {1}", values.size(), fmt::join(values, ", "));
+        output.success(
+            "Found {count} structures: {names}"_trl(
+                origin.getLocaleCode(),
+                "count"_a = values.size(),
+                "names"_a = fmt::join(values, ", ")
+            )
+        );
     });
     cmd.runtimeOverload()
         .text("export_all")
@@ -69,7 +87,7 @@ bool iStructuralShift::enable() {
             if (auto res = exportStructural(name); !res) {
                 appendError(
                     errors,
-                    ll::makeStringError(fmt::format("Failed to export {0} structure", name)).error(),
+                    ll::makeI18nStringError<"Failed to export {name} structure">("name"_a = name).error(),
                     std::move(res.error())
                 );
             } else {
@@ -78,32 +96,40 @@ bool iStructuralShift::enable() {
         }
 
         if (values.empty() && names.empty()) {
-            output.error("No structures found.");
+            output.error("No structures found."_trl(origin.getLocaleCode()));
             return;
         }
         if (!values.empty()) {
-            output.success("Exported {0} structures: {1}", values.size(), fmt::join(values, ", "));
+            output.success(
+                "Exported {count} structures: {names}"_trl(
+                    origin.getLocaleCode(),
+                    "count"_a = values.size(),
+                    "names"_a = fmt::join(values, ", ")
+                )
+            );
             updateCommandEnum();
         }
         if (!errors) {
-            errors.error().log(output);
+            errors.error().log(output, origin.getLocaleCode());
         }
     });
     cmd.runtimeOverload()
         .text("export")
         .required("name", ll::command::ParamKind::SoftEnum, "structural_shift_export")
-        .execute([this](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const& self) {
+        .execute([this](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const& self) {
         auto& name = self["name"].get<ll::command::ParamKind::SoftEnum>();
         if (auto res = exportStructural(name); !res) {
-            output.error("Failed to export {0} structure", name);
-            res.error().log(output);
+            output.error("Failed to export {name} structure"_trl(origin.getLocaleCode(), "name"_a = name));
+            res.error().log(output, origin.getLocaleCode());
             return;
         }
 
-        output.success("Exported {0} structure", name);
+        output.success("Exported {name} structure"_trl(origin.getLocaleCode(), "name"_a = name));
         updateCommandEnum();
     });
-    cmd.runtimeOverload().text("import_all").execute([this](CommandOrigin const&, CommandOutput& output, auto&&) {
+    cmd.runtimeOverload()
+        .text("import_all")
+        .execute([this](CommandOrigin const& origin, CommandOutput& output, auto&&) {
         std::vector<std::string> values;
         ll::Expected<>           errors;
 
@@ -112,15 +138,10 @@ bool iStructuralShift::enable() {
             if (entry.path().extension() != ".mcstructure") continue;
 
             if (auto res = importStructural(entry.path()); !res) {
+                auto name = ll::string_utils::u8str2str(entry.path().stem().u8string());
                 appendError(
                     errors,
-                    ll::makeStringError(
-                        fmt::format(
-                            "Failed to import {0} structure",
-                            ll::string_utils::u8str2str(entry.path().stem().u8string())
-                        )
-                    )
-                        .error(),
+                    ll::makeI18nStringError<"Failed to import {name} structure">("name"_a = name).error(),
                     std::move(res.error())
                 );
             } else {
@@ -129,44 +150,50 @@ bool iStructuralShift::enable() {
         }
 
         if (values.empty() && errors) {
-            output.error("No structures found.");
+            output.error("No structures found."_trl(origin.getLocaleCode()));
             return;
         }
         if (!values.empty()) {
-            output.success("Imported {0} structures: {1}", values.size(), fmt::join(values, ", "));
+            output.success(
+                "Imported {count} structures: {names}"_trl(
+                    origin.getLocaleCode(),
+                    "count"_a = values.size(),
+                    "names"_a = fmt::join(values, ", ")
+                )
+            );
             updateCommandEnum();
         }
         if (!errors) {
-            errors.error().log(output);
+            errors.error().log(output, origin.getLocaleCode());
         }
     });
     cmd.runtimeOverload()
         .text("import")
         .required("name", ll::command::ParamKind::SoftEnum, "structural_shift_import")
-        .execute([this](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const& self) {
+        .execute([this](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const& self) {
         auto& name = self["name"].get<ll::command::ParamKind::SoftEnum>();
         if (auto res = importStructural((getSelf().getDataDir() / u8"structures" / ll::file_utils::u8path(name))
                                             .replace_extension(".mcstructure"));
             !res) {
-            output.error("Failed to import {0} structure", name);
-            res.error().log(output);
+            output.error("Failed to import {name} structure"_trl(origin.getLocaleCode(), "name"_a = name));
+            res.error().log(output, origin.getLocaleCode());
             return;
         }
-        output.success("Imported {0} structure", name);
+        output.success("Imported {name} structure"_trl(origin.getLocaleCode(), "name"_a = name));
         updateCommandEnum();
     });
     cmd.runtimeOverload()
         .text("remove")
         .required("name", ll::command::ParamKind::SoftEnum, "structural_shift_export")
-        .execute([this](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const& self) {
+        .execute([this](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const& self) {
         auto& name = self["name"].get<ll::command::ParamKind::SoftEnum>();
         if (auto res = removeStructural(name); !res) {
-            output.error("Failed to remove {0} structure", name);
-            res.error().log(output);
+            output.error("Failed to remove {name} structure"_trl(origin.getLocaleCode(), "name"_a = name));
+            res.error().log(output, origin.getLocaleCode());
             return;
         }
 
-        output.success("Removed {0} structure", name);
+        output.success("Removed {name} structure"_trl(origin.getLocaleCode(), "name"_a = name));
         updateCommandEnum();
     });
     cmd.runtimeOverload()
@@ -180,7 +207,7 @@ bool iStructuralShift::enable() {
             if (auto res = removeStructural(name); !res) {
                 appendError(
                     errors,
-                    ll::makeStringError(fmt::format("Failed to remove {0} structure", name)).error(),
+                    ll::makeI18nStringError<"Failed to remove {name} structure">("name"_a = name).error(),
                     std::move(res.error())
                 );
             } else {
@@ -189,39 +216,64 @@ bool iStructuralShift::enable() {
         }
 
         if (values.empty() && names.empty()) {
-            output.error("No structures found.");
+            output.error("No structures found."_trl(origin.getLocaleCode()));
             return;
         }
         if (!values.empty()) {
-            output.success("Removed {0} structures: {1}", values.size(), fmt::join(values, ", "));
+            output.success(
+                "Removed {count} structures: {names}"_trl(
+                    origin.getLocaleCode(),
+                    "count"_a = values.size(),
+                    "names"_a = fmt::join(values, ", ")
+                )
+            );
             updateCommandEnum();
         }
         if (!errors) {
-            errors.error().log(output);
+            errors.error().log(output, origin.getLocaleCode());
         }
     });
     cmd.runtimeOverload()
         .text("bypass_limit")
         .optional("status", ll::command::ParamKind::Bool)
-        .execute([](CommandOrigin const&, CommandOutput& output, ll::command::RuntimeCommand const& self) {
+        .execute([](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const& self) {
         using Hooks = ll::memory::HookRegistrar<NoStructureRangeLimitHook>;
         static bool mCurrentStatus{false};
+        auto const  localeCode = origin.getLocaleCode();
 
         if (self["status"].has_value()) {
             auto status = self["status"].get<ll::command::ParamKind::Bool>();
             if (status != mCurrentStatus) {
                 mCurrentStatus = status;
                 status ? Hooks::hook() : Hooks::unhook();
-                output.success("Vanilla structure range limit removal {0}", status ? "enabled" : "disabled");
+                output.success(
+                    "Vanilla structure range limit removal {status}"_trl(
+                        localeCode,
+                        "status"_a   = status ? "enabled"_trl(localeCode) : "disabled"_trl(localeCode),
+                        "enabled"_a  = "enabled"_trl(localeCode),
+                        "disabled"_a = "disabled"_trl(localeCode)
+                    )
+                );
                 return;
             }
-            output.error("Vanilla structure range limit removal already {0}", status ? "enabled" : "disabled");
+            output.error(
+                "Vanilla structure range limit removal already {status}"_trl(
+                    localeCode,
+                    "status"_a   = status ? "enabled"_trl(localeCode) : "disabled"_trl(localeCode),
+                    "enabled"_a  = "enabled"_trl(localeCode),
+                    "disabled"_a = "disabled"_trl(localeCode)
+                )
+            );
             return;
         }
 
         output.success(
-            "Vanilla structure range limit removal is currently {0}",
-            mCurrentStatus ? "enabled" : "disabled"
+            "Vanilla structure range limit removal is currently {status}"_trl(
+                localeCode,
+                "status"_a   = mCurrentStatus ? "enabled"_trl(localeCode) : "disabled"_trl(localeCode),
+                "enabled"_a  = "enabled"_trl(localeCode),
+                "disabled"_a = "disabled"_trl(localeCode)
+            )
         );
     });
     return true;
@@ -239,24 +291,24 @@ std::filesystem::path iStructuralShift::getStructuralPath(std::string_view name)
 }
 
 ll::Expected<> iStructuralShift::importStructural(std::filesystem::path const& path) try {
-    if (!std::filesystem::exists(path)) return ll::makeStringError("File not found");
-    if (!std::filesystem::is_regular_file(path)) return ll::makeStringError("Not a regular file");
-    if (path.extension() != ".mcstructure") return ll::makeStringError("Not a mcstructure file");
+    if (!std::filesystem::exists(path)) return ll::makeI18nStringError<"File not found">();
+    if (!std::filesystem::is_regular_file(path)) return ll::makeI18nStringError<"Not a regular file">();
+    if (path.extension() != ".mcstructure") return ll::makeI18nStringError<"Not a mcstructure file">();
 
     auto level = ll::service::getLevel();
-    if (!level) return ll::makeStringError("No level");
+    if (!level) return ll::makeI18nStringError<"No level">();
     auto  name    = ll::string_utils::u8str2str(path.stem().u8string());
     auto& stroage = static_cast<DBStorage&>(level->getLevelStorage());
 
     auto content = ll::file_utils::readFile(path, true);
-    if (!content) return ll::makeStringError("Failed to read file");
+    if (!content) return ll::makeI18nStringError<"Failed to read file">();
 
     {
         auto tag = CompoundTag::fromBinaryNbt(*content);
         if (!tag) return ll::forwardError(tag.error());
 
         auto structure = std::make_unique<StructureTemplate>("", level->getUnknownBlockTypeRegistry());
-        if (!structure->load(*tag)) return ll::makeStringError("Invalid structure template");
+        if (!structure->load(*tag)) return ll::makeI18nStringError<"Invalid structure template">();
     }
 
     stroage.saveData(
@@ -272,7 +324,7 @@ ll::Expected<> iStructuralShift::importStructural(std::filesystem::path const& p
 
 ll::Expected<> iStructuralShift::exportStructural(std::string_view name) try {
     auto level = ll::service::getLevel();
-    if (!level) return ll::makeStringError("No level");
+    if (!level) return ll::makeI18nStringError<"No level">();
     auto& structures = *level->getStructureManager()->mStructureRepository;
     auto& storage    = static_cast<DBStorage&>(level->getLevelStorage());
 
@@ -281,27 +333,27 @@ ll::Expected<> iStructuralShift::exportStructural(std::string_view name) try {
 
     if (auto it = structures.find(cacheName); it != structures.end()) {
         auto tag = it->second->save();
-        if (!tag) return ll::makeStringError("Failed to save structure template");
+        if (!tag) return ll::makeI18nStringError<"Failed to save structure template">();
 
         auto content = tag->toBinaryNbt();
         if (!ll::file_utils::writeFile(getStructuralPath(name), content, true)) {
-            return ll::makeStringError("Failed to write file");
+            return ll::makeI18nStringError<"Failed to write file">();
         }
 
         return {};
     }
 
     if (!storage.hasKey(storageName, DBHelpers::Category::All)) {
-        return ll::makeStringError("Structure template not found");
+        return ll::makeI18nStringError<"Structure template not found">();
     }
 
     std::string content;
     if (!storage.loadData(storageName, content, DBHelpers::Category::All)) {
-        return ll::makeStringError("Failed to load data");
+        return ll::makeI18nStringError<"Failed to load data">();
     }
 
     if (!ll::file_utils::writeFile(getStructuralPath(name), content, true)) {
-        return ll::makeStringError("Failed to write file");
+        return ll::makeI18nStringError<"Failed to write file">();
     }
 
     return {};
@@ -311,7 +363,7 @@ ll::Expected<> iStructuralShift::exportStructural(std::string_view name) try {
 
 ll::Expected<> iStructuralShift::removeStructural(std::string_view name) try {
     auto level = ll::service::getLevel();
-    if (!level) return ll::makeStringError("No level");
+    if (!level) return ll::makeI18nStringError<"No level">();
     auto& storage    = static_cast<DBStorage&>(level->getLevelStorage());
     auto& structures = *level->getStructureManager()->mStructureRepository;
 
@@ -325,7 +377,7 @@ ll::Expected<> iStructuralShift::removeStructural(std::string_view name) try {
     }
 
     if (!storage.hasKey(storageName, DBHelpers::Category::All) && !fileRemoved) {
-        return ll::makeStringError("Structure template not found");
+        return ll::makeI18nStringError<"Structure template not found">();
     }
 
     storage.deleteData(storageName, DBHelpers::Category::All);
@@ -337,7 +389,7 @@ ll::Expected<> iStructuralShift::removeStructural(std::string_view name) try {
 void iStructuralShift::updateCommandEnum() try {
     auto level = ll::service::getLevel();
     if (!level) return;
-    auto& registrar = getCommandRegistrar();
+    auto& registrar = ll::command::CommandRegistrar::getInstance(false);
     for (auto enumName : {"structural_shift_export", "structural_shift_import"}) {
         if (!registrar.hasSoftEnum(enumName)) registrar.tryRegisterSoftEnum(enumName, {});
     }
@@ -366,15 +418,6 @@ void iStructuralShift::updateCommandEnum() try {
     ll::error_utils::printCurrentException(getSelf().getLogger());
 }
 
-ll::command::CommandRegistrar& iStructuralShift::getCommandRegistrar() {
-    // clang-format off
-    return ll::Overloaded{
-        [](auto& (*func)()) -> auto& { return func(); },
-        [](auto& (*func)(bool)) -> auto& { return func(false); }
-    }(&ll::command::CommandRegistrar::getInstance);
-    // clang-format on
-}
-
 ll::SmallDenseSet<std::string> iStructuralShift::getAllStructuralNames(Level& level) {
     auto&                          stroage = static_cast<DBStorage&>(level.getLevelStorage());
     ll::SmallDenseSet<std::string> values;
@@ -384,6 +427,7 @@ ll::SmallDenseSet<std::string> iStructuralShift::getAllStructuralNames(Level& le
         [&values](std::string_view key, std::string_view) { values.insert(std::string{key}); }
     );
     for (auto& [name, _structure] : *level.getStructureManager()->mStructureRepository) {
+        if (!name.starts_with("mystructure:")) continue;
         values.insert(name.substr(sizeof("mystructure:") - 1));
     }
     return values;
@@ -445,7 +489,7 @@ LL_TYPE_INSTANCE_HOOK(
     iStructuralShift::GetOrCreateStructureHook,
     HookPriority::Normal,
     StructureManager,
-    &StructureManager::getOrCreate,
+    &StructureManager::$getOrCreate,
     StructureTemplate&,
     std::string const& structureName
 ) {

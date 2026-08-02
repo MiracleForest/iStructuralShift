@@ -33,7 +33,6 @@ public:
     ll::Expected<>        removeStructural(std::string_view name);
     void                  updateCommandEnum();
 
-    static ll::command::CommandRegistrar& getCommandRegistrar();
     static ll::SmallDenseSet<std::string> getAllStructuralNames(Level& level);
 
     template <typename First, typename... Rest>

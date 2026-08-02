@@ -4,7 +4,7 @@ add_rules("plugin.compile_commands.autoupdate")
 
 add_repositories("liteldev-repo https://github.com/LiteLDev/xmake-repo.git")
 
-add_requires("levilamina 1.1.2", { configs = { target_type = "server" } })
+add_requires("levilamina 26.20.7", { configs = { target_type = "server" } })
 
 if not has_config("vs_runtime") then
     set_runtimes("MD")
@@ -31,7 +31,8 @@ target("iStructuralShift")
         "NOMINMAX", 
         "UNICODE",
         "_HAS_CXX23=1",
-        "LL_PLAT_S"
+        "LL_PLAT_S",
+        "_SILENCE_CXX20_IS_ALWAYS_EQUAL_DEPRECATION_WARNING=1"
     )
     add_packages("levilamina")
     set_exceptions("none")
@@ -76,7 +77,7 @@ target("iStructuralShift")
 
         os.vcp(target:targetfile(), format("%s/", output_dir))
         os.vcp(target:symbolfile(), format("%s/", output_dir))
-
+        os.vcp(path.join(os.projectdir(), "lang"), format("%s/lang", output_dir))
 
         import("scripts.generate-manifest", { rootdir = os.projectdir() }).generate_manifest(
             format("%s/manifest.json", output_dir),
