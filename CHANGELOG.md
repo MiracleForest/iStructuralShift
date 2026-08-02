@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial release @zimuya4153 @Lovelylavender4
+- Initial release @zimuya4153
 
 [Unreleased]: https://github.com/MiracleForest/iAutomaticFishing/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/MiracleForest/iAutomaticFishing/releases/tag/v1.0.0
