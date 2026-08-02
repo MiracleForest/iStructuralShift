@@ -76,8 +76,3 @@ plugins/iStructuralShift/data/structures/
 
 1. Download the latest release package from the [Releases page](https://github.com/MiracleForest/iStructuralShift/releases)
 2. Extract the package into your server's `./plugins` directory
-
-## Requirements
-
-- LeviLamina
-- A compatible Bedrock Dedicated Server environment

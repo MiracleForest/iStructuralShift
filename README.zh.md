@@ -76,8 +76,3 @@ plugins/iStructuralShift/data/structures/
 
 1. 从 [Releases 页面](https://github.com/MiracleForest/iStructuralShift/releases) 下载最新发布包
 2. 把压缩包内容解压到服务端的 `./plugins` 目录
-
-## 依赖
-
-- LeviLamina
-- 可用的 Bedrock Dedicated Server 服务端环境
