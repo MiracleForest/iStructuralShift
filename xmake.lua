@@ -10,7 +10,7 @@ option_end()
 
 add_repositories("liteldev-repo https://github.com/LiteLDev/xmake-repo.git")
 
-add_requires("levilamina 26.40.*", { configs = { target_type = get_config("target_type") } })
+add_requires("levilamina 26.51.*", { configs = { target_type = get_config("target_type") } })
 
 if not has_config("vs_runtime") then
     set_runtimes("MD")
