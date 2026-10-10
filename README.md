@@ -18,7 +18,6 @@ When importing or removing structures, the mod also clears the corresponding in-
 - List all available structures from both storage and memory cache
 - Remove one or all structures from storage and memory cache
 - Refresh command soft enums after structure changes
-- Optionally bypass the vanilla structure size range limit
 - Built-in i18n resources for `en-us`, `zh-cn`, and `zh-tw`
 
 ## Usage
@@ -36,7 +35,6 @@ Command alias: `/iss`
 /structural_shift import_all
 /structural_shift remove <name>
 /structural_shift remove_all
-/structural_shift bypass_limit [true|false]
 ```
 
 ### Command Notes
@@ -47,7 +45,6 @@ Command alias: `/iss`
 - `import_all` imports every `.mcstructure` file in the structures directory
 - `remove <name>` removes the structure from both world storage and the in-memory cache
 - `remove_all` removes every known structure from both world storage and the in-memory cache
-- `bypass_limit` turns the vanilla structure command range limit on or off
 
 ## File Location
 

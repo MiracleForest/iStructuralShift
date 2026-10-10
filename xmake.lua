@@ -10,7 +10,7 @@ option_end()
 
 add_repositories("liteldev-repo https://github.com/LiteLDev/xmake-repo.git")
 
-add_requires("levilamina 26.20.7", { configs = { target_type = get_config("target_type") } })
+add_requires("levilamina 26.32.*", { configs = { target_type = get_config("target_type") } })
 
 if not has_config("vs_runtime") then
     set_runtimes("MD")
@@ -18,7 +18,6 @@ end
 
 target("iStructuralShift")
     add_cxflags(
-        "/EHa",
         "/utf-8",
         "/W4",
         "/w44265",
@@ -39,6 +38,20 @@ target("iStructuralShift")
         "_HAS_CXX23=1",
         "_SILENCE_CXX20_IS_ALWAYS_EQUAL_DEPRECATION_WARNING=1"
     )
+    add_cxflags(
+        "/EHs",
+        "-Wno-microsoft-cast",
+        "-Wno-invalid-offsetof",
+        "-Wno-c++2b-extensions",
+        "-Wno-microsoft-include",
+        "-Wno-overloaded-virtual",
+        "-Wno-ignored-qualifiers",
+        "-Wno-missing-field-initializers",
+        "-Wno-potentially-evaluated-expression",
+        "-Wno-pragma-system-header-outside-header",
+        { tools = { "clang_cl" } }
+    )
+    set_toolchains("clang-cl")
     add_packages("levilamina")
     set_exceptions("none")
     set_kind("shared")

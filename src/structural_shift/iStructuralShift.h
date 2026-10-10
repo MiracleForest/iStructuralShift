@@ -12,7 +12,6 @@ namespace mif::structural_shift {
 
 class iStructuralShift {
 public:
-    struct NoStructureRangeLimitHook;
     struct GetOrCreateStructureHook;
     struct SaveStructureHook;
     struct DeleteStructureHook;

@@ -256,49 +256,6 @@ void iStructuralShift::registerCommand() {
             errors.error().log(output, origin.getLocaleCode());
         }
     });
-    cmd.runtimeOverload()
-        .text("bypass_limit")
-        .optional("status", ll::command::ParamKind::Bool)
-        .execute([](CommandOrigin const& origin, CommandOutput& output, ll::command::RuntimeCommand const& self) {
-        using Hooks = ll::memory::HookRegistrar<NoStructureRangeLimitHook>;
-        static bool mCurrentStatus{false};
-        auto const  localeCode = origin.getLocaleCode();
-
-        if (self["status"].has_value()) {
-            auto status = self["status"].get<ll::command::ParamKind::Bool>();
-            if (status != mCurrentStatus) {
-                mCurrentStatus = status;
-                status ? Hooks::hook() : Hooks::unhook();
-                output.success(
-                    "Vanilla structure range limit removal {status}"_trl(
-                        localeCode,
-                        "status"_a   = status ? "enabled"_trl(localeCode) : "disabled"_trl(localeCode),
-                        "enabled"_a  = "enabled"_trl(localeCode),
-                        "disabled"_a = "disabled"_trl(localeCode)
-                    )
-                );
-                return;
-            }
-            output.error(
-                "Vanilla structure range limit removal already {status}"_trl(
-                    localeCode,
-                    "status"_a   = status ? "enabled"_trl(localeCode) : "disabled"_trl(localeCode),
-                    "enabled"_a  = "enabled"_trl(localeCode),
-                    "disabled"_a = "disabled"_trl(localeCode)
-                )
-            );
-            return;
-        }
-
-        output.success(
-            "Vanilla structure range limit removal is currently {status}"_trl(
-                localeCode,
-                "status"_a   = mCurrentStatus ? "enabled"_trl(localeCode) : "disabled"_trl(localeCode),
-                "enabled"_a  = "enabled"_trl(localeCode),
-                "disabled"_a = "disabled"_trl(localeCode)
-            )
-        );
-    });
 }
 
 std::filesystem::path iStructuralShift::getStructuralPath(std::string_view name) {
@@ -446,45 +403,6 @@ ll::SmallDenseSet<std::string> iStructuralShift::getAllStructuralNames(Level& le
         values.insert(name.substr(sizeof("mystructure:") - 1));
     }
     return values;
-}
-
-LL_TYPE_INSTANCE_HOOK(
-    iStructuralShift::NoStructureRangeLimitHook,
-    HookPriority::Normal,
-    StructureCommand,
-    &StructureCommand::_isValidSize,
-    bool,
-    BlockPos const&             size,
-    DimensionHeightRange const& heightRange,
-    CommandOutput&              output
-) {
-    if (size.x < 1 || size.y < 1 || size.z < 1) {
-        std::vector<CommandOutputParameter> params{
-            CommandOutputParameter{std::to_string(1).c_str()},
-            CommandOutputParameter{std::to_string(1).c_str()},
-            CommandOutputParameter{std::to_string(1).c_str()},
-            CommandOutputParameter{std::to_string(size.x).c_str()},
-            CommandOutputParameter{std::to_string(size.y).c_str()},
-            CommandOutputParameter{std::to_string(size.z).c_str()}
-        };
-        output.addMessage("commands.structure.size.tooSmall", params, CommandOutputMessageType::Error);
-        return false;
-    }
-
-    if (auto maxHeight = heightRange.mMax - heightRange.mMin; size.y > maxHeight) {
-        std::vector<CommandOutputParameter> params{
-            CommandOutputParameter{"∞"},
-            CommandOutputParameter{std::to_string(maxHeight).c_str()},
-            CommandOutputParameter{"∞"},
-            CommandOutputParameter{std::to_string(size.x).c_str()},
-            CommandOutputParameter{std::to_string(size.y).c_str()},
-            CommandOutputParameter{std::to_string(size.z).c_str()}
-        };
-        output.addMessage("commands.structure.size.tooBig", params, CommandOutputMessageType::Error);
-        return false;
-    }
-
-    return true;
 }
 
 LL_TYPE_INSTANCE_HOOK(

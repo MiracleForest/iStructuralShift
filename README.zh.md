@@ -18,7 +18,6 @@
 - 同时列出存档里和内存里的全部结构
 - 同时删除存档里和内存里的单个或全部结构
 - 结构发生变化后自动刷新命令补全
-- 可以去掉 MC 原版结构命令的范围限制
 - 内置 `en-us`、`zh-cn`、`zh-tw` 语言资源
 
 ## 用法
@@ -36,7 +35,6 @@
 /structural_shift import_all
 /structural_shift remove <name>
 /structural_shift remove_all
-/structural_shift bypass_limit [true|false]
 ```
 
 ### 命令说明
@@ -47,7 +45,6 @@
 - `import_all` 会导入结构目录下的全部 `.mcstructure` 文件
 - `remove <name>` 会同时删掉这个结构在存档里和内存里的数据
 - `remove_all` 会同时删掉全部已知结构在存档里和内存里的数据
-- `bypass_limit` 用来开关“去掉 MC 原版结构命令范围限制”这个功能
 
 ## 文件位置
 
